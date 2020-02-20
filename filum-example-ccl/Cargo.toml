@@ -1,5 +1,5 @@
 [package]
-name = "filum-example"
+name = "filum-example-ccl"
 version = "0.1.0"
 authors = ["Keitaro Oguri <ogukei256@gmail.com>"]
 edition = "2018"
