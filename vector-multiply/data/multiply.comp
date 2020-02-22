@@ -1,0 +1,13 @@
+#version 450
+
+layout(binding = 0) buffer LHS {
+   float lhs[];
+};
+layout(binding = 1) buffer RHS {
+   float rhs[];
+};
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    lhs[index] = lhs[index] * rhs[index];
+}
