@@ -1,10 +1,10 @@
 #version 450
 
 layout(binding = 0) buffer LHS {
-   float lhs[];
+    float lhs[];
 };
 layout(binding = 1) buffer RHS {
-   float rhs[];
+    float rhs[];
 };
 
 void main() {
