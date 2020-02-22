@@ -120,9 +120,9 @@ checksum = "bb1f6b1ce1c140482ea30ddd3335fc0024ac7ee112895426e0a629a6c20adfe3"
 
 [[package]]
 name = "filum"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "872e8da2f9c1629e5ec9a4c58b73726463cfab9cf6a2be2dbc291505dc549cf7"
+checksum = "ae0bafe8498731bd9ff85450af4dde979037d41a04c1eb6d846a71bec2fb9b70"
 dependencies = [
  "libc",
 ]
