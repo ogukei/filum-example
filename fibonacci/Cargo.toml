@@ -1,0 +1,8 @@
+[package]
+name = "filum-example-fibonacci"
+version = "0.1.0"
+authors = ["Keitaro Oguri <ogukei256@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+filum = "0.1.0"
