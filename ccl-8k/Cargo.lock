@@ -128,7 +128,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "filum-example"
+name = "filum-example-ccl-8k"
 version = "0.1.0"
 dependencies = [
  "filum",
