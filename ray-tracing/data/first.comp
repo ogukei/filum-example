@@ -1,0 +1,36 @@
+#version 450
+
+layout(constant_id = 0) const uint WIDTH = 8;
+layout(constant_id = 1) const uint HEIGHT = 8;
+layout(binding = 0) buffer Binding {
+    vec4 image[];
+};
+
+struct Ray {
+    vec3 origin;
+    vec3 direction;
+};
+
+Ray ray(vec3 origin, vec3 direction) {
+    return Ray(origin, normalize(direction));
+}
+
+vec3 color(Ray ray) {
+    vec3 dir = ray.direction;
+    float t = 0.5 * (dir.y + 1.0);
+    return (1.0 - t) * vec3(1, 1, 1) + t * vec3(0.5, 0.7, 1.0);
+}
+
+const vec3 lowerLeftCorner = vec3(-2.0, -1.0, -1.0);
+const vec3 horizontal = vec3(4.0, 0, 0);
+const vec3 vertical = vec3(0, 2, 0);
+const vec3 origin = vec3(0, 0, 0);
+
+void main() {
+    uint ix = gl_GlobalInvocationID.x;
+    uint iy = gl_GlobalInvocationID.y;
+    float u = float(ix) / float(WIDTH);
+    float v = float(iy) / float(HEIGHT);
+    Ray r = ray(origin, lowerLeftCorner + u * horizontal + v * vertical);
+    image[iy * WIDTH + ix] = vec4(color(r), 1);
+}
