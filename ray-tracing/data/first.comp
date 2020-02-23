@@ -243,19 +243,22 @@ struct Camera {
     vec3 vertical;
 };
 
-Camera camera(float vfov, float aspect) {
+Camera camera(vec3 lookfrom, vec3 lookat, vec3 vup, float vfov, float aspect) {
     float theta = vfov*M_PI/180;
     float halfHeight = tan(theta/2);
     float halfWidth = aspect * halfHeight;
-    vec3 lowerLeftCorner = vec3(-halfWidth, -halfHeight, -1.0);
-    vec3 horizontal = vec3(2*halfWidth, 0.0, 0.0);
-    vec3 vertical = vec3(0.0, 2*halfHeight, 0.0);
-    vec3 origin = vec3(0.0, 0.0, 0.0);
+    vec3 w = normalize(lookfrom - lookat);
+    vec3 u = normalize(cross(vup, w));
+    vec3 v = cross(w, u);
+    vec3 origin = lookfrom;
+    vec3 lowerLeftCorner = origin - halfWidth*u - halfHeight*v - w;
+    vec3 horizontal = 2*halfWidth*u;
+    vec3 vertical = 2*halfHeight*v;
     return Camera(origin, lowerLeftCorner, horizontal, vertical);
 }
 
 Ray cameraRay(Camera c, float u, float v) {
-    return ray(c.origin, c.lowerLeftCorner + u * c.horizontal + v * c.vertical);
+    return ray(c.origin, c.lowerLeftCorner + u * c.horizontal + v * c.vertical - c.origin);
 }
 
 void antialiasing(Camera camera, uint ix, uint iy, inout Random rng, inout vec3 blended) {
@@ -271,7 +274,7 @@ void main() {
     uint ix = gl_GlobalInvocationID.x;
     uint iy = gl_GlobalInvocationID.y;
     vec3 blended = vec3(0, 0, 0);
-    Camera cam = camera(90, float(WIDTH) / float(HEIGHT));
+    Camera cam = camera(vec3(-2,2,1), vec3(0,0,-1), vec3(0,1,0), 90, float(WIDTH) / float(HEIGHT));
     Random rng = Random(ix + WIDTH * iy, 0, 0);
     for (uint ia = 0; ia < NUM_ANTIALIASING; ia++) {
         rng.y = ia;
