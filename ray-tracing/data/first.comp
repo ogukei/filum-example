@@ -39,11 +39,12 @@ struct Material {
     float fuzz;
 };
 
-const Material MATERIALS[4] = Material[](
+const Material MATERIALS[5] = Material[](
     Material(MATERIAL_LAMBERTIAN, vec3(0.8, 0.3, 0.3), 0),
     Material(MATERIAL_LAMBERTIAN, vec3(0.8, 0.8, 0), 0),
     Material(MATERIAL_METAL, vec3(0.8, 0.6, 0.2), 0.0),
-    Material(MATERIAL_METAL, vec3(0.8, 0.8, 0.8), 0.5)
+    Material(MATERIAL_METAL, vec3(0.8, 0.8, 0.8), 1),
+    Material(MATERIAL_DIELECTRIC, vec3(1, 1, 1), 1.7)
 );
 
 struct Hit {
@@ -66,13 +67,13 @@ float randomNext(inout Random r) {
 
 const uint NUM_OBJECTS = 4;
 const Sphere OBJECTS[NUM_OBJECTS] = Sphere[](
-    Sphere(vec3(0, 0, -1), 0.5, MATERIAL_INDEX(0)),
+    Sphere(vec3(0, 0, -1), 0.5, MATERIAL_INDEX(4)),
     Sphere(vec3(0, -100.5, -1), 100.0, MATERIAL_INDEX(1)),
     Sphere(vec3(1, 0, -1), 0.5, MATERIAL_INDEX(2)),
     Sphere(vec3(-1, 0, -1), 0.5, MATERIAL_INDEX(3))
 );
 
-const uint NUM_ANTIALIASING = 100;
+const uint NUM_ANTIALIASING = 200;
 
 Ray ray(vec3 origin, vec3 direction) {
     return Ray(origin, normalize(direction));
@@ -139,20 +140,63 @@ bool hitObjects(Ray r, float tMin, float tMax, inout Hit hit) {
     return hitAnything;
 }
 
+float schlick(float cosine, float ref) {
+    float r0 = (1.0 - ref) / (1.0 + ref);
+    r0 = r0 * r0;
+    float q = 1.0 - cosine;
+    return r0 + (1.0 - r0) * (q*q*q*q*q);
+}
+
 bool materialScatter(Material mat, Ray r, Hit hit, inout Random rng, out vec3 attenuation, out Ray scattered) {
     switch (mat.type) {
     case MATERIAL_LAMBERTIAN:
+    {
         vec3 target = hit.p + hit.normal + randomNextSphereUnit(rng);
         scattered = ray(hit.p, target - hit.p);
         attenuation = mat.albedo;
         return true;
+    }
     case MATERIAL_METAL:
+    {
         vec3 reflected = reflect(r.direction, hit.normal);
         Ray scatteredRay = ray(hit.p, reflected + mat.fuzz * randomNextSphereUnit(rng));
         scattered = scatteredRay;
         attenuation = mat.albedo;
         return dot(scatteredRay.direction, hit.normal) > 0;
     }
+    case MATERIAL_DIELECTRIC:
+    {
+        vec3 reflected = reflect(r.direction, hit.normal);
+        vec3 outward;
+        float niOverNt;
+        attenuation = vec3(1, 1, 1);
+
+        float ref = mat.fuzz;
+        float cosine;
+        if (dot(r.direction, hit.normal) > 0) {
+            outward = -hit.normal;
+            niOverNt = ref;
+            cosine = ref * dot(r.direction, hit.normal) / length(r.direction);
+        } else {
+            outward = hit.normal;
+            niOverNt = 1.0 / ref;
+            cosine = -dot(r.direction, hit.normal) / length(r.direction);
+        }
+        float reflectProb;
+        vec3 refracted = refract(r.direction, outward, niOverNt);
+        if (refracted != vec3(0)) {
+            reflectProb = schlick(cosine, ref);
+        } else {
+            reflectProb = 1.0;
+        }
+        if (randomNext(rng) < reflectProb) {
+            scattered = ray(hit.p, reflected);
+        } else {
+            scattered = ray(hit.p, refracted);
+        }
+        return true;
+    }
+    } // end of switch
 }
 
 bool diffuse(Ray r, inout Random rng, out vec3 diffuseColor, inout Hit hit) {
@@ -171,7 +215,7 @@ vec3 diffuseLoop(Ray initialRay, inout Random rng) {
     Ray diffuseRay = initialRay;
     Hit hit;
     vec3 diffuseColor;
-    for (uint i = 0; i < 100; i++) {
+    for (uint i = 0; i < 50; i++) {
         bool continues = diffuse(diffuseRay, rng, diffuseColor, hit);
         if (continues) {
             vec3 attenuation;
@@ -181,7 +225,7 @@ vec3 diffuseLoop(Ray initialRay, inout Random rng) {
                 multiplies *= attenuation;
                 diffuseRay = scattered;
             } else {
-                break;
+                return vec3(0, 0, 0);
             }
         } else {
             return multiplies * diffuseColor;
