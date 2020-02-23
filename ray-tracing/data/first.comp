@@ -36,11 +36,14 @@ struct Sphere {
 struct Material {
     uint type;
     vec3 albedo;
+    float fuzz;
 };
 
-const Material MATERIALS[2] = Material[](
-    Material(MATERIAL_LAMBERTIAN, vec3(0.5, 0.5, 0.5)),
-    Material(MATERIAL_LAMBERTIAN, vec3(0.5, 0.5, 0.5))
+const Material MATERIALS[4] = Material[](
+    Material(MATERIAL_LAMBERTIAN, vec3(0.8, 0.3, 0.3), 0),
+    Material(MATERIAL_LAMBERTIAN, vec3(0.8, 0.8, 0), 0),
+    Material(MATERIAL_METAL, vec3(0.8, 0.6, 0.2), 0.0),
+    Material(MATERIAL_METAL, vec3(0.8, 0.8, 0.8), 0.5)
 );
 
 struct Hit {
@@ -61,13 +64,15 @@ float randomNext(inout Random r) {
     return rand(vec3(r.x, r.n, r.y));
 }
 
-const uint NUM_OBJECTS = 2;
+const uint NUM_OBJECTS = 4;
 const Sphere OBJECTS[NUM_OBJECTS] = Sphere[](
     Sphere(vec3(0, 0, -1), 0.5, MATERIAL_INDEX(0)),
-    Sphere(vec3(0, -100.5, -1), 100.0, MATERIAL_INDEX(1))
+    Sphere(vec3(0, -100.5, -1), 100.0, MATERIAL_INDEX(1)),
+    Sphere(vec3(1, 0, -1), 0.5, MATERIAL_INDEX(2)),
+    Sphere(vec3(-1, 0, -1), 0.5, MATERIAL_INDEX(3))
 );
 
-const uint NUM_ANTIALIASING = 1000;
+const uint NUM_ANTIALIASING = 100;
 
 Ray ray(vec3 origin, vec3 direction) {
     return Ray(origin, normalize(direction));
@@ -141,6 +146,12 @@ bool materialScatter(Material mat, Ray r, Hit hit, inout Random rng, out vec3 at
         scattered = ray(hit.p, target - hit.p);
         attenuation = mat.albedo;
         return true;
+    case MATERIAL_METAL:
+        vec3 reflected = reflect(r.direction, hit.normal);
+        Ray scatteredRay = ray(hit.p, reflected + mat.fuzz * randomNextSphereUnit(rng));
+        scattered = scatteredRay;
+        attenuation = mat.albedo;
+        return dot(scatteredRay.direction, hit.normal) > 0;
     }
 }
 
