@@ -1,0 +1,309 @@
+#version 450
+
+// Ray Tracing in One Weekend
+// Copyright 2018-2019. Peter Shirley. All rights reserved.
+// @see https://raytracing.github.io/books/RayTracingInOneWeekend.html
+
+layout(constant_id = 0) const uint WIDTH = 8;
+layout(constant_id = 1) const uint HEIGHT = 8;
+layout(constant_id = 2) const uint NUM_OBJECTS = 4;
+
+const uint NUM_ANTIALIASING = 100;
+
+#define FLT_MAX 3.402823466e+38
+#define M_PI 3.1415926535
+
+// Material
+#define MATERIAL_LAMBERTIAN 0
+#define MATERIAL_METAL 1
+#define MATERIAL_DIELECTRIC 2
+
+#define MATERIAL_INDEX(_idx) _idx
+#define MATERIAL(_idx) materials[_idx]
+
+struct Material {
+    vec4 albedo;
+    uvec4 type;
+};
+
+struct Sphere {
+    vec4 centerAndRadius;
+    uvec4 mat;
+};
+
+layout(binding = 0) buffer Binding {
+    vec4 image[];
+};
+
+layout(binding = 1) buffer Objects {
+    Sphere objects[];
+};
+
+layout(binding = 2) buffer Materials {
+    Material materials[];
+};
+
+// @see https://www.ronja-tutorials.com/2018/09/02/white-noise.html
+float rand(vec3 value) {
+    return fract(sin(dot(sin(value), vec3(12.9898, 78.233, 37.719))) * 143758.5453);
+}
+
+struct Random {
+    uint x;
+    uint y;
+    uint n;
+};
+
+float randomNext(inout Random r) {
+    r.n += 1;
+    return rand(vec3(r.x, r.n, r.y));
+}
+
+vec3 randomNextSphereUnit(inout Random r) {
+    vec3 p;
+    float len;
+    do {
+        float a = randomNext(r);
+        float b = randomNext(r);
+        float c = randomNext(r);
+        p = 2.0 * vec3(a, b, c) - vec3(1, 1, 1);
+        len = length(p);
+    } while (len*len >= 1.0);
+    return p;
+}
+
+vec3 randomNextUnitDisk(inout Random r) {
+    vec3 p;
+    do {
+        float a = randomNext(r);
+        float b = randomNext(r);
+        p = 2.0 * vec3(a, b, 0) - vec3(1, 1, 0);
+    } while (dot(p, p) >= 1.0);
+    return p;
+}
+
+struct Ray {
+    vec3 origin;
+    vec3 direction;
+};
+
+struct Hit {
+    float t;
+    vec3 p;
+    vec3 normal;
+    uint mat;
+};
+
+Ray ray(vec3 origin, vec3 direction) {
+    return Ray(origin, normalize(direction));
+}
+
+vec3 rayPoint(Ray r, float t) {
+    return r.origin + t * r.direction;
+}
+
+bool sphereHit(Sphere s, Ray r, float tMin, float tMax, inout Hit hit) {
+    vec3 center = s.centerAndRadius.xyz;
+    float radius = s.centerAndRadius.w;
+    vec3 oc = r.origin - center;
+    float a = dot(r.direction, r.direction);
+    float b = dot(oc, r.direction);
+    float c = dot(oc, oc) - radius * radius;
+    float discriminant = b*b - a*c;
+    if (discriminant > 0) {
+        float temp = (-b - sqrt(discriminant)) / a;
+        if (temp < tMax && temp > tMin) {
+            vec3 p = rayPoint(r, temp);
+            hit.t = temp;
+            hit.p = p;
+            hit.normal = (p - center) / radius;
+            hit.mat = s.mat.x;
+            return true;
+        }
+        temp = (-b + sqrt(discriminant)) / a;
+        if (temp < tMax && temp > tMin) {
+            vec3 p = rayPoint(r, temp);
+            hit.t = temp;
+            hit.p = p;
+            hit.normal = (p - center) / radius;
+            hit.mat = s.mat.x;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool hitObjects(Ray r, float tMin, float tMax, inout Hit hit) {
+    Hit tempHit;
+    bool hitAnything = false;
+    float closestSoFar = tMax;
+    for (uint i = 0; i < NUM_OBJECTS; i++) {
+        Sphere object = objects[i];
+        if (sphereHit(object, r, tMin, closestSoFar, tempHit)) {
+            hitAnything = true;
+            closestSoFar = tempHit.t;
+            hit = tempHit;
+        }
+    }
+    return hitAnything;
+}
+
+float schlick(float cosine, float ref) {
+    float r0 = (1.0 - ref) / (1.0 + ref);
+    r0 = r0 * r0;
+    float q = 1.0 - cosine;
+    return r0 + (1.0 - r0) * (q*q*q*q*q);
+}
+
+bool materialScatter(Material mat, Ray r, Hit hit, inout Random rng, out vec3 attenuation, out Ray scattered) {
+    switch (mat.type.x) {
+    case MATERIAL_LAMBERTIAN:
+    {
+        vec3 target = hit.p + hit.normal + randomNextSphereUnit(rng);
+        scattered = ray(hit.p, target - hit.p);
+        attenuation = mat.albedo.xyz;
+        return true;
+    }
+    case MATERIAL_METAL:
+    {
+        vec3 reflected = reflect(r.direction, hit.normal);
+        Ray scatteredRay = ray(hit.p, reflected + mat.albedo.w * randomNextSphereUnit(rng));
+        scattered = scatteredRay;
+        attenuation = mat.albedo.xyz;
+        return dot(scatteredRay.direction, hit.normal) > 0;
+    }
+    case MATERIAL_DIELECTRIC:
+    {
+        vec3 reflected = reflect(r.direction, hit.normal);
+        vec3 outward;
+        float niOverNt;
+        attenuation = vec3(1, 1, 1);
+        float ref = mat.albedo.w;
+        float cosine;
+        if (dot(r.direction, hit.normal) > 0) {
+            outward = -hit.normal;
+            niOverNt = ref;
+            cosine = ref * dot(r.direction, hit.normal) / length(r.direction);
+        } else {
+            outward = hit.normal;
+            niOverNt = 1.0 / ref;
+            cosine = -dot(r.direction, hit.normal) / length(r.direction);
+        }
+        float reflectProb;
+        vec3 refracted = refract(r.direction, outward, niOverNt);
+        if (refracted != vec3(0)) {
+            reflectProb = schlick(cosine, ref);
+        } else {
+            reflectProb = 1.0;
+        }
+        if (randomNext(rng) < reflectProb) {
+            scattered = ray(hit.p, reflected);
+        } else {
+            scattered = ray(hit.p, refracted);
+        }
+        return true;
+    }
+    } // end of switch
+}
+
+bool diffuse(Ray r, inout Random rng, out vec3 diffuseColor, inout Hit hit) {
+    if (hitObjects(r, 0.001, FLT_MAX, hit)) {
+        return true;
+    } else {
+        vec3 dir = r.direction;
+        float t = 0.5 * (dir.y + 1.0);
+        diffuseColor = (1.0 - t) * vec3(1, 1, 1) + t * vec3(0.5, 0.7, 1.0);
+        return false;
+    }
+}
+
+vec3 diffuseLoop(Ray initialRay, inout Random rng) {
+    vec3 multiplies = vec3(1, 1, 1);
+    Ray diffuseRay = initialRay;
+    Hit hit;
+    vec3 diffuseColor;
+    for (uint i = 0; i < 50; i++) {
+        bool continues = diffuse(diffuseRay, rng, diffuseColor, hit);
+        if (continues) {
+            vec3 attenuation;
+            Ray scattered;
+            continues = materialScatter(MATERIAL(hit.mat), diffuseRay, hit, rng, attenuation, scattered);
+            if (continues) {
+                multiplies *= attenuation;
+                diffuseRay = scattered;
+            } else {
+                return vec3(0, 0, 0);
+            }
+        } else {
+            return multiplies * diffuseColor;
+        }
+    }
+    return vec3(0, 0, 0);
+}
+
+// Camera
+struct Camera {
+    vec3 origin;
+    vec3 lowerLeftCorner;
+    vec3 horizontal;
+    vec3 vertical;
+    vec3 u, v, w;
+    float lensRadius;
+};
+
+Camera camera(vec3 lookfrom, vec3 lookat, vec3 vup, float vfov, float aspect, 
+        float aperture, float focusDist) {
+    float lensRadius = aperture / 2;
+    float theta = vfov*M_PI/180;
+    float halfHeight = tan(theta/2);
+    float halfWidth = aspect * halfHeight;
+    vec3 w = normalize(lookfrom - lookat);
+    vec3 u = normalize(cross(vup, w));
+    vec3 v = cross(w, u);
+    vec3 origin = lookfrom;
+    vec3 lowerLeftCorner = origin
+                        - halfWidth * focusDist * u
+                        - halfHeight * focusDist * v
+                        - focusDist * w;
+    vec3 horizontal = 2*halfWidth*focusDist*u;
+    vec3 vertical = 2*halfHeight*focusDist*v;
+    return Camera(origin, lowerLeftCorner, horizontal, vertical, u, v, w, lensRadius);
+}
+
+Ray cameraRay(Camera c, float s, float t, inout Random rng) {
+    vec3 rd = c.lensRadius * randomNextUnitDisk(rng);
+    vec3 offset = c.u * rd.x + c.v * rd.y;
+    return ray(c.origin + offset,
+               c.lowerLeftCorner + s*c.horizontal + t*c.vertical - c.origin - offset);
+}
+
+void antialiasing(Camera camera, uint ix, uint iy, inout Random rng, inout vec3 blended) {
+    float noiseX = randomNext(rng);
+    float noiseY = randomNext(rng);
+    float u = float(ix + noiseX) / float(WIDTH);
+    float v = float(iy + noiseY) / float(HEIGHT);
+    Ray r = cameraRay(camera, u, v, rng);
+    blended += diffuseLoop(r, rng);
+}
+
+void main() {
+    uint ix = gl_GlobalInvocationID.x;
+    uint iy = gl_GlobalInvocationID.y;
+    vec3 blended = vec3(0, 0, 0);
+
+    vec3 lookfrom = vec3(13, 2, 3);
+    vec3 lookat = vec3(0,0,0);
+    float focusDist = 10.0;
+    float aperture = 0.1;
+
+    Camera cam = camera(lookfrom, lookat, vec3(0,1,0), 20, float(WIDTH)/float(HEIGHT), 
+        aperture, focusDist);
+    Random rng = Random(ix + WIDTH * iy, 0, 0);
+    for (uint ia = 0; ia < NUM_ANTIALIASING; ia++) {
+        rng.y = ia;
+        antialiasing(cam, ix, iy, rng, blended);
+    }
+    blended /= float(NUM_ANTIALIASING);
+    blended = sqrt(blended);
+    image[iy * WIDTH + ix] = vec4(blended, 1.0);
+}
