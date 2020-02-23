@@ -1,30 +1,17 @@
 #version 450
 
+// Ray Tracing in One Weekend
+// Copyright 2018-2019. Peter Shirley. All rights reserved.
+// @see https://raytracing.github.io/books/RayTracingInOneWeekend.html
+
 layout(constant_id = 0) const uint WIDTH = 8;
 layout(constant_id = 1) const uint HEIGHT = 8;
+layout(constant_id = 2) const uint NUM_OBJECTS = 4;
+
+const uint NUM_ANTIALIASING = 100;
 
 #define FLT_MAX 3.402823466e+38
 #define M_PI 3.1415926535
-
-// @see https://www.ronja-tutorials.com/2018/09/02/white-noise.html
-float rand(vec3 value) {
-    return fract(sin(dot(sin(value), vec3(12.9898, 78.233, 37.719))) * 143758.5453);
-}
-
-layout(binding = 0) buffer Binding {
-    vec4 image[];
-};
-
-struct Ray {
-    vec3 origin;
-    vec3 direction;
-};
-
-struct Sphere {
-    vec3 center;
-    float radius;
-    uint mat;
-};
 
 // Material
 #define MATERIAL_LAMBERTIAN 0
@@ -32,28 +19,34 @@ struct Sphere {
 #define MATERIAL_DIELECTRIC 2
 
 #define MATERIAL_INDEX(_idx) _idx
-#define MATERIAL(_idx) MATERIALS[_idx]
+#define MATERIAL(_idx) materials[_idx]
 
 struct Material {
-    uint type;
-    vec3 albedo;
-    float fuzz;
+    vec4 albedo;
+    uvec4 type;
 };
 
-const Material MATERIALS[5] = Material[](
-    Material(MATERIAL_LAMBERTIAN, vec3(0.8, 0.3, 0.3), 0),
-    Material(MATERIAL_LAMBERTIAN, vec3(0.8, 0.8, 0), 0),
-    Material(MATERIAL_METAL, vec3(0.8, 0.6, 0.2), 0.0),
-    Material(MATERIAL_METAL, vec3(0.8, 0.8, 0.8), 1),
-    Material(MATERIAL_DIELECTRIC, vec3(1, 1, 1), 1.7)
-);
-
-struct Hit {
-    float t;
-    vec3 p;
-    vec3 normal;
-    uint mat;
+struct Sphere {
+    vec4 centerAndRadius;
+    uvec4 mat;
 };
+
+layout(binding = 0) buffer Binding {
+    vec4 image[];
+};
+
+layout(binding = 1) buffer Objects {
+    Sphere objects[];
+};
+
+layout(binding = 2) buffer Materials {
+    Material materials[];
+};
+
+// @see https://www.ronja-tutorials.com/2018/09/02/white-noise.html
+float rand(vec3 value) {
+    return fract(sin(dot(sin(value), vec3(12.9898, 78.233, 37.719))) * 143758.5453);
+}
 
 struct Random {
     uint x;
@@ -64,53 +57,6 @@ struct Random {
 float randomNext(inout Random r) {
     r.n += 1;
     return rand(vec3(r.x, r.n, r.y));
-}
-
-const uint NUM_OBJECTS = 4;
-const Sphere OBJECTS[NUM_OBJECTS] = Sphere[](
-    Sphere(vec3(0, 0, -1), 0.5, MATERIAL_INDEX(0)),
-    Sphere(vec3(0, -1000.5, -1), 1000.0, MATERIAL_INDEX(1)),
-    Sphere(vec3(1, 0, -1), 0.5, MATERIAL_INDEX(2)),
-    Sphere(vec3(-1, 0, -1), 0.5, MATERIAL_INDEX(3))
-);
-
-const uint NUM_ANTIALIASING = 200;
-
-Ray ray(vec3 origin, vec3 direction) {
-    return Ray(origin, normalize(direction));
-}
-
-vec3 rayPoint(Ray r, float t) {
-    return r.origin + t * r.direction;
-}
-
-bool sphereHit(Sphere s, Ray r, float tMin, float tMax, inout Hit hit) {
-    vec3 oc = r.origin - s.center;
-    float a = dot(r.direction, r.direction);
-    float b = dot(oc, r.direction);
-    float c = dot(oc, oc) - s.radius * s.radius;
-    float discriminant = b*b - a*c;
-    if (discriminant > 0) {
-        float temp = (-b - sqrt(discriminant)) / a;
-        if (temp < tMax && temp > tMin) {
-            vec3 p = rayPoint(r, temp);
-            hit.t = temp;
-            hit.p = p;
-            hit.normal = (p - s.center) / s.radius;
-            hit.mat = s.mat;
-            return true;
-        }
-        temp = (-b + sqrt(discriminant)) / a;
-        if (temp < tMax && temp > tMin) {
-            vec3 p = rayPoint(r, temp);
-            hit.t = temp;
-            hit.p = p;
-            hit.normal = (p - s.center) / s.radius;
-            hit.mat = s.mat;
-            return true;
-        }
-    }
-    return false;
 }
 
 vec3 randomNextSphereUnit(inout Random r) {
@@ -126,12 +72,73 @@ vec3 randomNextSphereUnit(inout Random r) {
     return p;
 }
 
+vec3 randomNextUnitDisk(inout Random r) {
+    vec3 p;
+    do {
+        float a = randomNext(r);
+        float b = randomNext(r);
+        p = 2.0 * vec3(a, b, 0) - vec3(1, 1, 0);
+    } while (dot(p, p) >= 1.0);
+    return p;
+}
+
+struct Ray {
+    vec3 origin;
+    vec3 direction;
+};
+
+struct Hit {
+    float t;
+    vec3 p;
+    vec3 normal;
+    uint mat;
+};
+
+Ray ray(vec3 origin, vec3 direction) {
+    return Ray(origin, normalize(direction));
+}
+
+vec3 rayPoint(Ray r, float t) {
+    return r.origin + t * r.direction;
+}
+
+bool sphereHit(Sphere s, Ray r, float tMin, float tMax, inout Hit hit) {
+    vec3 center = s.centerAndRadius.xyz;
+    float radius = s.centerAndRadius.w;
+    vec3 oc = r.origin - center;
+    float a = dot(r.direction, r.direction);
+    float b = dot(oc, r.direction);
+    float c = dot(oc, oc) - radius * radius;
+    float discriminant = b*b - a*c;
+    if (discriminant > 0) {
+        float temp = (-b - sqrt(discriminant)) / a;
+        if (temp < tMax && temp > tMin) {
+            vec3 p = rayPoint(r, temp);
+            hit.t = temp;
+            hit.p = p;
+            hit.normal = (p - center) / radius;
+            hit.mat = s.mat.x;
+            return true;
+        }
+        temp = (-b + sqrt(discriminant)) / a;
+        if (temp < tMax && temp > tMin) {
+            vec3 p = rayPoint(r, temp);
+            hit.t = temp;
+            hit.p = p;
+            hit.normal = (p - center) / radius;
+            hit.mat = s.mat.x;
+            return true;
+        }
+    }
+    return false;
+}
+
 bool hitObjects(Ray r, float tMin, float tMax, inout Hit hit) {
     Hit tempHit;
     bool hitAnything = false;
     float closestSoFar = tMax;
     for (uint i = 0; i < NUM_OBJECTS; i++) {
-        Sphere object = OBJECTS[i];
+        Sphere object = objects[i];
         if (sphereHit(object, r, tMin, closestSoFar, tempHit)) {
             hitAnything = true;
             closestSoFar = tempHit.t;
@@ -149,20 +156,20 @@ float schlick(float cosine, float ref) {
 }
 
 bool materialScatter(Material mat, Ray r, Hit hit, inout Random rng, out vec3 attenuation, out Ray scattered) {
-    switch (mat.type) {
+    switch (mat.type.x) {
     case MATERIAL_LAMBERTIAN:
     {
         vec3 target = hit.p + hit.normal + randomNextSphereUnit(rng);
         scattered = ray(hit.p, target - hit.p);
-        attenuation = mat.albedo;
+        attenuation = mat.albedo.xyz;
         return true;
     }
     case MATERIAL_METAL:
     {
         vec3 reflected = reflect(r.direction, hit.normal);
-        Ray scatteredRay = ray(hit.p, reflected + mat.fuzz * randomNextSphereUnit(rng));
+        Ray scatteredRay = ray(hit.p, reflected + mat.albedo.w * randomNextSphereUnit(rng));
         scattered = scatteredRay;
-        attenuation = mat.albedo;
+        attenuation = mat.albedo.xyz;
         return dot(scatteredRay.direction, hit.normal) > 0;
     }
     case MATERIAL_DIELECTRIC:
@@ -171,8 +178,7 @@ bool materialScatter(Material mat, Ray r, Hit hit, inout Random rng, out vec3 at
         vec3 outward;
         float niOverNt;
         attenuation = vec3(1, 1, 1);
-
-        float ref = mat.fuzz;
+        float ref = mat.albedo.w;
         float cosine;
         if (dot(r.direction, hit.normal) > 0) {
             outward = -hit.normal;
@@ -235,16 +241,6 @@ vec3 diffuseLoop(Ray initialRay, inout Random rng) {
     return vec3(0, 0, 0);
 }
 
-vec3 randomNextUnitDisk(inout Random r) {
-    vec3 p;
-    do {
-        float a = randomNext(r);
-        float b = randomNext(r);
-        p = 2.0 * vec3(a, b, 0) - vec3(1, 1, 0);
-    } while (dot(p, p) >= 1.0);
-    return p;
-}
-
 // Camera
 struct Camera {
     vec3 origin;
@@ -295,13 +291,13 @@ void main() {
     uint iy = gl_GlobalInvocationID.y;
     vec3 blended = vec3(0, 0, 0);
 
-    vec3 lookfrom = vec3(1,0.25,1);
-    vec3 lookat = vec3(0,0,-1);
-    float focusDist = (lookfrom-lookat).length() - 0.25;
-    float aperture = 0.06;
-    Camera cam = camera(lookfrom, lookat, vec3(0,1,0), 70, float(WIDTH)/float(HEIGHT), 
+    vec3 lookfrom = vec3(13, 2, 3);
+    vec3 lookat = vec3(0,0,0);
+    float focusDist = 10.0;
+    float aperture = 0.1;
+
+    Camera cam = camera(lookfrom, lookat, vec3(0,1,0), 20, float(WIDTH)/float(HEIGHT), 
         aperture, focusDist);
-    
     Random rng = Random(ix + WIDTH * iy, 0, 0);
     for (uint ia = 0; ia < NUM_ANTIALIASING; ia++) {
         rng.y = ia;
