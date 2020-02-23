@@ -14,7 +14,7 @@ use std::time::Instant;
 fn main() {
     // opens image file
     println!("processing input image");
-    let mut img_view = image::ImageBuffer::<image::Rgba<u8>, Vec<u8>>::new(2000, 1000);
+    let mut img_view = image::ImageBuffer::<image::Rgba<u8>, Vec<u8>>::new(800, 400);
     let (width, height) = img_view.dimensions();
     let (width, height) = (width as usize, height as usize);
     let len = width * height;
