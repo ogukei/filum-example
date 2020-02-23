@@ -22,12 +22,32 @@ struct Ray {
 struct Sphere {
     vec3 center;
     float radius;
+    uint mat;
 };
+
+// Material
+#define MATERIAL_LAMBERTIAN 0
+#define MATERIAL_METAL 1
+#define MATERIAL_DIELECTRIC 2
+
+#define MATERIAL_INDEX(_idx) _idx
+#define MATERIAL(_idx) MATERIALS[_idx]
+
+struct Material {
+    uint type;
+    vec3 albedo;
+};
+
+const Material MATERIALS[2] = Material[](
+    Material(MATERIAL_LAMBERTIAN, vec3(0.5, 0.5, 0.5)),
+    Material(MATERIAL_LAMBERTIAN, vec3(0.5, 0.5, 0.5))
+);
 
 struct Hit {
     float t;
     vec3 p;
     vec3 normal;
+    uint mat;
 };
 
 struct Random {
@@ -43,8 +63,8 @@ float randomNext(inout Random r) {
 
 const uint NUM_OBJECTS = 2;
 const Sphere OBJECTS[NUM_OBJECTS] = Sphere[](
-    Sphere(vec3(0, 0, -1), 0.5),
-    Sphere(vec3(0, -100.5, -1), 100.0)
+    Sphere(vec3(0, 0, -1), 0.5, MATERIAL_INDEX(0)),
+    Sphere(vec3(0, -100.5, -1), 100.0, MATERIAL_INDEX(1))
 );
 
 const uint NUM_ANTIALIASING = 1000;
@@ -70,6 +90,7 @@ bool sphereHit(Sphere s, Ray r, float tMin, float tMax, inout Hit hit) {
             hit.t = temp;
             hit.p = p;
             hit.normal = (p - s.center) / s.radius;
+            hit.mat = s.mat;
             return true;
         }
         temp = (-b + sqrt(discriminant)) / a;
@@ -78,6 +99,7 @@ bool sphereHit(Sphere s, Ray r, float tMin, float tMax, inout Hit hit) {
             hit.t = temp;
             hit.p = p;
             hit.normal = (p - s.center) / s.radius;
+            hit.mat = s.mat;
             return true;
         }
     }
@@ -112,6 +134,16 @@ bool hitObjects(Ray r, float tMin, float tMax, inout Hit hit) {
     return hitAnything;
 }
 
+bool materialScatter(Material mat, Ray r, Hit hit, inout Random rng, out vec3 attenuation, out Ray scattered) {
+    switch (mat.type) {
+    case MATERIAL_LAMBERTIAN:
+        vec3 target = hit.p + hit.normal + randomNextSphereUnit(rng);
+        scattered = ray(hit.p, target - hit.p);
+        attenuation = mat.albedo;
+        return true;
+    }
+}
+
 bool diffuse(Ray r, inout Random rng, out vec3 diffuseColor, inout Hit hit) {
     if (hitObjects(r, 0.001, FLT_MAX, hit)) {
         return true;
@@ -124,23 +156,30 @@ bool diffuse(Ray r, inout Random rng, out vec3 diffuseColor, inout Hit hit) {
 }
 
 vec3 diffuseLoop(Ray initialRay, inout Random rng) {
-    float multiplies = 1.0;
+    vec3 multiplies = vec3(1, 1, 1);
     Ray diffuseRay = initialRay;
-    for (uint i = 0; i < 10000; i++) {
-        Hit hit;
-        vec3 diffuseColor;
+    Hit hit;
+    vec3 diffuseColor;
+    for (uint i = 0; i < 100; i++) {
         bool continues = diffuse(diffuseRay, rng, diffuseColor, hit);
         if (continues) {
-            multiplies *= 0.5;
-            vec3 target = hit.p + hit.normal + randomNextSphereUnit(rng);
-            diffuseRay = ray(hit.p, target - hit.p);
+            vec3 attenuation;
+            Ray scattered;
+            continues = materialScatter(MATERIAL(hit.mat), diffuseRay, hit, rng, attenuation, scattered);
+            if (continues) {
+                multiplies *= attenuation;
+                diffuseRay = scattered;
+            } else {
+                break;
+            }
         } else {
-            return diffuseColor * multiplies;
+            return multiplies * diffuseColor;
         }
     }
     return vec3(0, 0, 0);
 }
 
+// Camera
 struct Camera {
     vec3 origin;
     vec3 lowerLeftCorner;
