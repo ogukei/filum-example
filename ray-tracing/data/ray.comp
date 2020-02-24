@@ -6,9 +6,7 @@
 
 layout(constant_id = 0) const uint WIDTH = 8;
 layout(constant_id = 1) const uint HEIGHT = 8;
-layout(constant_id = 2) const uint NUM_OBJECTS = 4;
-
-const uint NUM_ANTIALIASING = 100;
+layout(constant_id = 2) const uint NUM_OBJECTS = 1;
 
 #define FLT_MAX 3.402823466e+38
 #define M_PI 3.1415926535
@@ -29,6 +27,20 @@ struct Material {
 struct Sphere {
     vec4 centerAndRadius;
     uvec4 mat;
+};
+
+struct Camera {
+    vec4 origin;
+    vec4 lowerLeftCorner;
+    vec4 horizontal;
+    vec4 vertical;
+    vec4 u, v, w;
+    vec4 lensRadius;
+};
+
+layout(push_constant) uniform PushConstant {
+    uvec4 sample_index;
+    Camera camera;
 };
 
 layout(binding = 0) buffer Binding {
@@ -241,69 +253,30 @@ vec3 diffuseLoop(Ray initialRay, inout Random rng) {
     return vec3(0, 0, 0);
 }
 
-// Camera
-struct Camera {
-    vec3 origin;
-    vec3 lowerLeftCorner;
-    vec3 horizontal;
-    vec3 vertical;
-    vec3 u, v, w;
-    float lensRadius;
-};
-
-Camera camera(vec3 lookfrom, vec3 lookat, vec3 vup, float vfov, float aspect, 
-        float aperture, float focusDist) {
-    float lensRadius = aperture / 2;
-    float theta = vfov*M_PI/180;
-    float halfHeight = tan(theta/2);
-    float halfWidth = aspect * halfHeight;
-    vec3 w = normalize(lookfrom - lookat);
-    vec3 u = normalize(cross(vup, w));
-    vec3 v = cross(w, u);
-    vec3 origin = lookfrom;
-    vec3 lowerLeftCorner = origin
-                        - halfWidth * focusDist * u
-                        - halfHeight * focusDist * v
-                        - focusDist * w;
-    vec3 horizontal = 2*halfWidth*focusDist*u;
-    vec3 vertical = 2*halfHeight*focusDist*v;
-    return Camera(origin, lowerLeftCorner, horizontal, vertical, u, v, w, lensRadius);
+Ray cameraRay(Camera cam, float s, float t, inout Random rng) {
+    vec3 rd = cam.lensRadius.x * randomNextUnitDisk(rng);
+    vec3 offset = cam.u.xyz * rd.x + cam.v.xyz * rd.y;
+    return ray(cam.origin.xyz + offset,
+               cam.lowerLeftCorner.xyz 
+                   + s * cam.horizontal.xyz 
+                   + t * cam.vertical.xyz 
+                   - cam.origin.xyz 
+                   - offset);
 }
 
-Ray cameraRay(Camera c, float s, float t, inout Random rng) {
-    vec3 rd = c.lensRadius * randomNextUnitDisk(rng);
-    vec3 offset = c.u * rd.x + c.v * rd.y;
-    return ray(c.origin + offset,
-               c.lowerLeftCorner + s*c.horizontal + t*c.vertical - c.origin - offset);
-}
-
-void antialiasing(Camera camera, uint ix, uint iy, inout Random rng, inout vec3 blended) {
+vec3 antialias_sample(Camera cam, uint ix, uint iy, inout Random rng) {
     float noiseX = randomNext(rng);
     float noiseY = randomNext(rng);
     float u = float(ix + noiseX) / float(WIDTH);
     float v = float(iy + noiseY) / float(HEIGHT);
-    Ray r = cameraRay(camera, u, v, rng);
-    blended += diffuseLoop(r, rng);
+    Ray r = cameraRay(cam, u, v, rng);
+    return diffuseLoop(r, rng);
 }
 
 void main() {
     uint ix = gl_GlobalInvocationID.x;
     uint iy = gl_GlobalInvocationID.y;
-    vec3 blended = vec3(0, 0, 0);
-
-    vec3 lookfrom = vec3(13, 2, 3);
-    vec3 lookat = vec3(0,0,0);
-    float focusDist = 10.0;
-    float aperture = 0.1;
-
-    Camera cam = camera(lookfrom, lookat, vec3(0,1,0), 20, float(WIDTH)/float(HEIGHT), 
-        aperture, focusDist);
-    Random rng = Random(ix + WIDTH * iy, 0, 0);
-    for (uint ia = 0; ia < NUM_ANTIALIASING; ia++) {
-        rng.y = ia;
-        antialiasing(cam, ix, iy, rng, blended);
-    }
-    blended /= float(NUM_ANTIALIASING);
-    blended = sqrt(blended);
-    image[iy * WIDTH + ix] = vec4(blended, 1.0);
+    Random rng = Random(ix + WIDTH * iy, sample_index.x, 0);
+    vec3 blended = antialias_sample(camera, ix, iy, rng);
+    image[iy * WIDTH + ix] += vec4(blended, 1.0);
 }
