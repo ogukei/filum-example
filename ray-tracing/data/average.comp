@@ -1,0 +1,16 @@
+#version 450
+
+layout(constant_id = 0) const uint WIDTH = 8;
+layout(constant_id = 1) const uint NUM_ANTIALIASING = 100;
+
+layout(binding = 0) buffer Binding {
+    vec4 image[];
+};
+
+void main() {
+    uint ix = gl_GlobalInvocationID.x;
+    uint iy = gl_GlobalInvocationID.y;
+    vec4 blended = image[iy * WIDTH + ix];
+    blended /= float(NUM_ANTIALIASING);
+    image[iy * WIDTH + ix] = sqrt(blended);
+}

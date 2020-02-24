@@ -4,56 +4,23 @@ extern crate filum;
 use filum::{Context, BufferViewBuilder, PipelineBuilder, DispatchBuilder};
 
 extern crate image;
-
 extern crate rand;
-
 use rand::prelude::*;
 
-use std::collections::HashMap;
 use std::time::Instant;
 
-#[repr(C)]
-struct Sphere {
-    x: f32,
-    y: f32,
-    z: f32,
-    radius: f32,
-    mat: u32,
-    reserved0: u32,
-    reserved1: u32,
-    reserved2: u32,
-}
-
-#[repr(C)]
-struct Material {
-    x: f32,
-    y: f32,
-    z: f32,
-    w: f32,
-    ty: u32,
-    reserved0: u32,
-    reserved1: u32,
-    reserved2: u32,
-}
-
-fn distance(ax: f32, ay: f32, az: f32, bx: f32, by: f32, bz: f32) -> f32 {
-    let dx = bx - ax;
-    let dy = by - ay;
-    let dz = bz - az;
-    return (dx * dx + dy * dy + dz * dz).sqrt();
-}
+mod geometry;
+use geometry::*;
 
 // Ray Tracing in One Weekend
 // Copyright 2018-2019. Peter Shirley. All rights reserved.
 // @see https://raytracing.github.io/books/RayTracingInOneWeekend.html
 fn main() {
-    // opens image file
-    println!("processing input image");
     let mut img_view = image::ImageBuffer::<image::Rgba<u8>, Vec<u8>>::new(400, 200);
     let (width, height) = img_view.dimensions();
     let (width, height) = (width as usize, height as usize);
     let len = width * height;
-    println!("shader setup");
+    let num_samples = 100;
     let num_objects = 30 + 4;
     // setup some shaders
     let context = Context::new().unwrap();
@@ -68,12 +35,16 @@ fn main() {
         .build()
         .unwrap();
     let buffer = view.buffer();
-    let first = PipelineBuilder::new(buffer)
+    let sample = PipelineBuilder::new(buffer)
         .shader("data/ray.comp.spv")
         .specialization(constants!(width as u32, height as u32, num_objects as u32))
         .build()
         .unwrap();
-    println!("uploading");
+    let average = PipelineBuilder::new(buffer)
+        .shader("data/average.comp.spv")
+        .specialization(constants!(width as u32, num_samples as u32))
+        .build()
+        .unwrap();
     let mut rng = rand::thread_rng();
     let instant = Instant::now();
     let binding_image = view.first_binding();
@@ -192,12 +163,44 @@ fn main() {
         }
     });
     println!("dispatch");
-    let dispatch = DispatchBuilder::new(&first)
+    let camera = Camera::new(
+        Vec3::new(13.0, 2.0, 3.0), 
+        Vec3::zero(), 
+        Vec3::new(0.0, 1.0, 0.0),
+        20.0,
+        width as f32 / height as f32,
+        0.1,
+        10.0);
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    struct PushConstant {
+        sample_index: u32,
+        reserved0: u32,
+        reserved1: u32,
+        reserved2: u32,
+        camera: Camera,
+    }
+    for index in 0..num_samples {
+        println!("sampling... {}/{}", index, num_samples);
+        let constant = PushConstant { 
+            sample_index: index as u32,
+            reserved0: 0,
+            reserved1: 0,
+            reserved2: 0,
+            camera: camera,
+        };
+        let dispatch_sample = DispatchBuilder::new(&sample)
+            .workgroup_count(width, height, 1)
+            .push_constants(constants!(constant))
+            .build()
+            .unwrap();
+        dispatch_sample.dispatch();
+    }
+    let dispatch_average = DispatchBuilder::new(&average)
         .workgroup_count(width, height, 1)
         .build()
         .unwrap();
-    dispatch.dispatch();
-    println!("fetching");
+    dispatch_average.dispatch();
     binding_image.fetch_array(|slice| {
         println!("done {:?}", instant.elapsed());
         output(slice, &mut img_view);
